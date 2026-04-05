@@ -1,13 +1,3 @@
-/**
- * 인증 상태 관리.
- *
- * interactive_login은 Playwright를 사용해 headed 브라우저를 열고
- * 사용자가 직접 로그인 및 MFA를 완료하면 JWT를 자동 수집한다.
- *
- * TypeScript + Playwright는 asyncio 이슈가 없으므로
- * Python 버전에서 필요했던 ThreadPoolExecutor 우회 코드가 불필요하다.
- */
-
 import { chromium } from "playwright";
 import type { PortalConfig } from "./config.js";
 import {
@@ -15,6 +5,10 @@ import {
   AuthenticationRequiredError,
 } from "./errors.js";
 import type { FileSessionStore, PortalSession } from "./session-store.js";
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export class PortalAuthManager {
   constructor(
@@ -24,6 +18,14 @@ export class PortalAuthManager {
 
   getSession(): PortalSession {
     return this.store.load();
+  }
+
+  async ensureAuthenticatedSession(timeoutSeconds = 300): Promise<PortalSession> {
+    const session = this.getSession();
+    if (session.authenticated && session.jwtToken) {
+      return session;
+    }
+    return this.interactiveLogin(timeoutSeconds);
   }
 
   requireAuthenticatedSession(): PortalSession {
@@ -51,10 +53,6 @@ export class PortalAuthManager {
     return session;
   }
 
-  /**
-   * JWT payload(base64url)를 디코딩해 employeeId 클레임을 추출한다.
-   * 서명 검증 없이 payload만 파싱한다.
-   */
   static decodeJwtEmployeeId(token: string): number | null {
     try {
       const payloadB64 = token.split(".")[1];
@@ -65,11 +63,11 @@ export class PortalAuthManager {
         const value = claims[key];
         if (value !== undefined && value !== null) {
           const parsed = parseInt(String(value), 10);
-          if (!isNaN(parsed)) return parsed;
+          if (!Number.isNaN(parsed)) return parsed;
         }
       }
     } catch {
-      // 파싱 실패 시 null 반환
+      return null;
     }
     return null;
   }
@@ -81,7 +79,7 @@ export class PortalAuthManager {
 
     if (!token) {
       throw new AuthenticationRequiredError(
-        "vuex payload에서 authority.token을 찾을 수 없습니다."
+        "vuex payload에서 authority.token 값을 찾을 수 없습니다."
       );
     }
 
@@ -94,37 +92,45 @@ export class PortalAuthManager {
     const loginUrl = `${baseUrl}/${this.config.loginPath.replace(/^\//, "")}`;
     const successUrl = `${baseUrl}/${this.config.loginSuccessUrl.replace(/^\//, "")}`;
 
-    let browser;
+    let browser: import("playwright").Browser | undefined;
     try {
       browser = await chromium.launch({ headless: false });
       const context = await browser.newContext();
       const page = await context.newPage();
 
       await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
-      await page.waitForURL(`${successUrl}**`, {
-        timeout: timeoutSeconds * 1000,
-      });
 
-      const vuexPayload = await page.evaluate(
-        () => window.localStorage.getItem("vuex")
+      // 1단계: OTP 인증 API 응답 대기.
+      //   ID/PW 제출 직후 Vuex에 임시 토큰이 세팅될 수 있으므로
+      //   반드시 OTP auth API 응답을 확인한 뒤 최종 토큰을 읽어야 한다.
+      await page.waitForResponse(
+        (response) =>
+          response.url().includes("/account/otp/auth") &&
+          response.status() === 200,
+        { timeout: timeoutSeconds * 1000 }
       );
 
-      if (vuexPayload) {
-        await this.showSuccessOverlay(page);
-      }
+      // 2단계: OTP 완료 후 Vuex에 최종 토큰이 반영될 때까지 잠깐 대기.
+      await sleep(1500);
 
-      await browser.close();
+      // 3단계: 최종 Vuex 토큰 추출.
+      const vuexPayload = await this.waitForVuexPayload(page, 15000);
 
       if (!vuexPayload) {
         throw new AuthenticationFlowError(
-          "로그인은 완료됐지만 localStorage['vuex']가 비어있습니다.",
+          "OTP 인증은 완료됐지만 localStorage['vuex'].authority.token 값을 찾지 못했습니다.",
           { loginUrl, successUrl }
         );
       }
 
-      return this.importVuexState(vuexPayload);
+      const session = this.importVuexState(vuexPayload);
+      await this.showSuccessToast(page);
+      // 브라우저는 닫지 않음 — 사용자가 포털을 계속 사용할 수 있도록 유지.
+      return session;
     } catch (err) {
-      if (browser) await browser.close().catch(() => {});
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
       if (err instanceof AuthenticationFlowError) throw err;
       throw new AuthenticationFlowError(
         "로그인 플로우가 완료되기 전에 실패했습니다.",
@@ -137,83 +143,68 @@ export class PortalAuthManager {
     }
   }
 
-  private async showSuccessOverlay(page: import("playwright").Page): Promise<void> {
+  private async waitForVuexPayload(
+    page: import("playwright").Page,
+    timeoutMs = 15000
+  ): Promise<string | null> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      if (page.isClosed()) {
+        return null;
+      }
+
+      try {
+        // vuex에 authority.token이 실제로 세팅된 경우에만 반환.
+        // 로그인 전에도 vuex가 존재할 수 있으므로 토큰 유무로 판단한다.
+        const payload = await page.evaluate(() => {
+          const raw = window.localStorage.getItem("vuex");
+          if (!raw) return null;
+          try {
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            const authority = parsed["authority"] as Record<string, unknown> | undefined;
+            const token = authority?.["token"];
+            return token ? raw : null;
+          } catch {
+            return null;
+          }
+        });
+        if (payload) return payload;
+      } catch {
+        // Ignore transient execution-context errors during redirects.
+      }
+
+      await sleep(500);
+    }
+
+    return null;
+  }
+
+  private async showSuccessToast(page: import("playwright").Page): Promise<void> {
     await page.evaluate(() => {
-      return new Promise<string>((resolve) => {
-        let countdown = 3;
-        let autoClose = true;
-
-        const overlay = document.createElement("div");
-        overlay.style.cssText =
-          "position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:2147483647";
-
-        const panel = document.createElement("div");
-        panel.style.cssText =
-          "width:min(92vw,420px);background:#fff;border-radius:18px;box-shadow:0 18px 48px rgba(15,23,42,.22);padding:24px;font-family:Segoe UI,Arial,sans-serif;color:#0f172a";
-
-        const title = document.createElement("div");
-        title.textContent = "로그인 성공";
-        title.style.cssText = "font-size:24px;font-weight:700;margin-bottom:12px";
-
-        const message = document.createElement("div");
-        message.style.cssText = "font-size:14px;line-height:1.6;margin-bottom:18px";
-
-        const buttonRow = document.createElement("div");
-        buttonRow.style.cssText = "display:flex;gap:12px;justify-content:flex-end";
-
-        const keepBtn = document.createElement("button");
-        keepBtn.textContent = "창 유지";
-        keepBtn.style.cssText =
-          "border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:10px;padding:10px 14px;cursor:pointer";
-
-        const closeBtn = document.createElement("button");
-        closeBtn.style.cssText =
-          "border:none;background:#2563eb;color:#fff;border-radius:10px;padding:10px 14px;cursor:pointer";
-
-        const render = () => {
-          if (autoClose) {
-            message.textContent = `포털 인증이 저장되었습니다. 이 창은 ${countdown}초 후 자동으로 닫힙니다.`;
-            closeBtn.textContent = "지금 닫기";
-            keepBtn.style.display = "inline-block";
-          } else {
-            message.textContent =
-              "포털 인증이 저장되었습니다. 자동 종료가 멈췄습니다. 확인 후 완료를 누르면 창이 닫힙니다.";
-            closeBtn.textContent = "완료";
-            keepBtn.style.display = "none";
-          }
-        };
-
-        render();
-
-        const timer = setInterval(() => {
-          if (!autoClose) return;
-          countdown -= 1;
-          if (countdown <= 0) {
-            clearInterval(timer);
-            resolve("auto_close");
-            return;
-          }
-          render();
-        }, 1000);
-
-        keepBtn.addEventListener("click", () => {
-          autoClose = false;
-          render();
-        });
-
-        closeBtn.addEventListener("click", () => {
-          clearInterval(timer);
-          resolve(autoClose ? "close_now" : "done");
-        });
-
-        buttonRow.appendChild(keepBtn);
-        buttonRow.appendChild(closeBtn);
-        panel.appendChild(title);
-        panel.appendChild(message);
-        panel.appendChild(buttonRow);
-        overlay.appendChild(panel);
-        document.body.appendChild(overlay);
-      });
+      const toast = document.createElement("div");
+      toast.style.cssText = [
+        "position:fixed",
+        "bottom:24px",
+        "right:24px",
+        "background:#16a34a",
+        "color:#fff",
+        "border-radius:10px",
+        "padding:12px 18px",
+        "font-family:Segoe UI,Arial,sans-serif",
+        "font-size:14px",
+        "font-weight:600",
+        "box-shadow:0 4px 16px rgba(0,0,0,.2)",
+        "z-index:2147483647",
+        "opacity:1",
+        "transition:opacity .4s",
+      ].join(";");
+      toast.textContent = "✅ 포털 인증이 저장되었습니다.";
+      document.body.appendChild(toast);
+      setTimeout(() => { toast.style.opacity = "0"; }, 3000);
+      setTimeout(() => { toast.remove(); }, 3500);
+    }).catch(() => {
+      // 페이지 상태 문제로 toast 삽입 실패해도 무시
     });
   }
 

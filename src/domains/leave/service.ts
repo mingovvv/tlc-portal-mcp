@@ -28,6 +28,25 @@ import {
 export class LeaveService {
   private preparedRequests = new Map<string, PreparedLeaveRequest>();
 
+  private static normalizeStatuses(statuses?: string[]): string[] {
+    const aliasMap: Record<string, string> = {
+      pending: "applied",
+      requested: "applied",
+      request: "applied",
+      completed: "approved",
+      done: "approved",
+      rejected: "reject",
+      cancelled: "cancel",
+      canceled: "cancel",
+    };
+
+    const normalized = (statuses ?? ["applied", "inProgress"])
+      .map((status) => aliasMap[status] ?? status)
+      .filter(Boolean);
+
+    return Array.from(new Set(normalized));
+  }
+
   constructor(
     private readonly config: PortalConfig,
     private readonly http: PortalHttpClient,
@@ -67,14 +86,8 @@ export class LeaveService {
     ];
   }
 
-  private getEmployeeId(): number {
-    const session = this.auth.getSession();
-    if (session.employeeId !== null) return session.employeeId;
-    return this.config.timeoutMs; // fallback — 사실상 config에 employee_id가 없음
-  }
-
   async getLeaveBalances(): Promise<LeaveBalance[]> {
-    const session = this.auth.requireAuthenticatedSession();
+    const session = await this.auth.ensureAuthenticatedSession();
     const employeeId = session.employeeId;
     if (!employeeId) {
       throw new LeaveValidationError(
@@ -127,7 +140,7 @@ export class LeaveService {
   }
 
   async listRequests(query?: Partial<LeaveRequestQuery>): Promise<LeaveRequestRecord[]> {
-    const session = this.auth.requireAuthenticatedSession();
+    const session = await this.auth.ensureAuthenticatedSession();
     const employeeId = session.employeeId;
     if (!employeeId) {
       throw new LeaveValidationError(
@@ -138,7 +151,7 @@ export class LeaveService {
     const today = new Date();
     const q: LeaveRequestQuery = {
       employeeId,
-      statuses: query?.statuses ?? ["applied", "inProgress"],
+      statuses: LeaveService.normalizeStatuses(query?.statuses),
       sort: query?.sort ?? "startDt",
       order: query?.order ?? "DESC",
       dateKey: query?.dateKey ?? "startDt",
@@ -165,14 +178,23 @@ export class LeaveService {
       session
     );
     const payload = (await res.json()) as {
-      data: { list: Record<string, unknown>[] };
+      data?: { list?: Record<string, unknown>[] };
+      status?: string;
+      statusCode?: number;
+      message?: string;
     };
+
+    if (!payload.data?.list) {
+      throw new LeaveValidationError(
+        payload.message ??
+          `Unexpected leave response shape (status=${payload.status ?? "unknown"}, statusCode=${payload.statusCode ?? "unknown"}).`
+      );
+    }
 
     return payload.data.list.map(this.mapRequestRecord);
   }
 
   prepareRequest(input: LeaveRequestInput): PreparedLeaveRequest {
-    this.auth.requireAuthenticatedSession();
     this.validateInput(input);
 
     const expires = new Date(Date.now() + 15 * 60 * 1000);
@@ -190,7 +212,7 @@ export class LeaveService {
   }
 
   async submitPreparedRequest(preparedRequestId: string): Promise<SubmitLeaveResult> {
-    const session = this.auth.requireAuthenticatedSession();
+    const session = await this.auth.ensureAuthenticatedSession();
     const prepared = this.preparedRequests.get(preparedRequestId);
     if (!prepared) {
       throw new PreparedRequestNotFoundError(
@@ -230,7 +252,7 @@ export class LeaveService {
   }
 
   async cancelRequest(requestId: string): Promise<CancelLeaveResult> {
-    const session = this.auth.requireAuthenticatedSession();
+    const session = await this.auth.ensureAuthenticatedSession();
     const res = await this.http.delete(
       `/api/vacation-svc/request/${requestId}`,
       session

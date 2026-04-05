@@ -53,3 +53,17 @@ export class PreparedRequestNotFoundError extends PortalError {
     this.name = "PreparedRequestNotFoundError";
   }
 }
+
+export class TimetableValidationError extends PortalError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimetableValidationError";
+  }
+}
+
+export class PreparedTimetableEntryNotFoundError extends PortalError {
+  constructor(message: string) {
+    super(message);
+    this.name = "PreparedTimetableEntryNotFoundError";
+  }
+}
