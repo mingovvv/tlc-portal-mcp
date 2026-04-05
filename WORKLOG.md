@@ -106,6 +106,8 @@
 - Added a post-login wait for `localStorage['vuex']` so the browser does not close before the token is actually written.
 - Reworked the login token capture to poll `localStorage['vuex']` across redirects instead of relying on a single page function wait.
 - Replaced the small post-login toast with a centered completion overlay that explains the Portal session is connected to the MCP server and that the page can be closed.
+- Tightened login success detection so the success overlay appears only after the browser reaches the configured portal success URL, not merely after an OTP response is observed.
+- Added OTP response-body validation so `/account/otp/auth` failure payloads no longer pass as successful login just because the HTTP status is 200.
 
 ### Current Project Shape
 

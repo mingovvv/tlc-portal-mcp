@@ -29,6 +29,7 @@ import {
   leavePrepareRequest,
   leaveSubmitPreparedRequest,
 } from "./tools/leave-tools.js";
+import { projectList } from "./tools/project-tools.js";
 import { systemCheckUpdate, systemInfo } from "./tools/system-tools.js";
 import {
   timetableClearDay,
@@ -44,7 +45,6 @@ import {
   timetableSubmitPreparedBulkEntries,
   timetableSubmitPreparedDayEntry,
 } from "./tools/timetable-tools.js";
-import { projectList } from "./tools/project-tools.js";
 
 async function main() {
   const config = loadConfig();
@@ -82,10 +82,12 @@ async function main() {
   ];
 
   const timetableRowSchema = z.object({
-    task_type: z.nativeEnum(TimetableTaskType),
-    work_time: z.number().positive(),
-    project_id: z.number().int().optional(),
-    note: z.string().optional(),
+    task_type: z
+      .nativeEnum(TimetableTaskType)
+      .describe("Work type (업무유형)"),
+    work_time: z.number().positive().describe("Hours to record (시간)"),
+    project_id: z.number().int().optional().describe("Project ID (프로젝트)"),
+    note: z.string().optional().describe("Optional note (비고)"),
   });
 
   const server = new McpServer({
@@ -158,17 +160,17 @@ async function main() {
       statuses: z
         .array(z.string())
         .default(["applied", "inProgress"])
-        .describe("Statuses to query"),
+        .describe("Statuses to query (조회 상태)"),
       from_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
         .optional()
-        .describe("Start date (YYYY-MM-DD)"),
+        .describe("Start date (시작 날짜, YYYY-MM-DD)"),
       to_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
         .optional()
-        .describe("End date (YYYY-MM-DD)"),
+        .describe("End date (종료 날짜, YYYY-MM-DD)"),
       limit: z.number().int().min(1).max(100).default(10),
       offset: z.number().int().min(0).default(0),
     },
@@ -186,28 +188,31 @@ async function main() {
 
   server.tool(
     "leave.prepare_request",
-    "Prepares a leave request payload before submission.",
+    "Prepares a leave request payload before submission. Do not infer missing leave fields from past records. If leave type is missing, ask the user and present these options: 종일휴가 (annual/full_day), 오전반차 (morning_half/half_day_am), 오후반차 (afternoon_half/half_day_pm), 인정휴가 (admit/full_day), 인정오전반차 (admit/half_day_am), 인정오후반차 (admit/half_day_pm).",
     {
       leave_type_code: z
         .enum(["annual", "morning_half", "afternoon_half", "admit"])
-        .describe("Leave type code"),
+        .describe("Leave type code (휴가 유형)"),
       start_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("Start date"),
+        .describe("Start date (시작 날짜)"),
       end_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("End date"),
+        .describe("End date (종료 날짜)"),
       unit: z
         .enum(["full_day", "half_day_am", "half_day_pm"])
         .default("full_day"),
-      reason: z.string().optional().describe("Leave reason"),
+      reason: z.string().optional().describe("Leave reason (사유)"),
       delegate_employee_id: z
         .string()
         .optional()
-        .describe("Delegate employee ID"),
-      contact_phone: z.string().optional().describe("Emergency contact number"),
+        .describe("Delegate employee ID (대리 담당자)"),
+      contact_phone: z
+        .string()
+        .optional()
+        .describe("Emergency contact number (비상 연락처)"),
     },
     ({
       leave_type_code,
@@ -282,7 +287,7 @@ async function main() {
       work_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("Work date (YYYY-MM-DD)"),
+        .describe("Work date (날짜, YYYY-MM-DD)"),
     },
     async ({ work_date }) =>
       toContent(await timetableGetDay(timetableService, work_date))
@@ -295,11 +300,11 @@ async function main() {
       start_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("Start date (YYYY-MM-DD)"),
+        .describe("Start date (시작 날짜, YYYY-MM-DD)"),
       end_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("End date (YYYY-MM-DD)"),
+        .describe("End date (종료 날짜, YYYY-MM-DD)"),
     },
     async ({ start_date, end_date }) =>
       toContent(
@@ -326,7 +331,7 @@ async function main() {
       work_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("Work date (YYYY-MM-DD)"),
+        .describe("Work date (날짜, YYYY-MM-DD)"),
     },
     async ({ work_date }) =>
       toContent(await timetableGetDayCapacity(timetableService, work_date))
@@ -334,12 +339,12 @@ async function main() {
 
   server.tool(
     "timetable.prepare_day_entry",
-    "Prepares a single-day timetable entry. work_date and task_type are required. project_id is required unless task_type is NORMAL.",
+    "Prepares a single-day timetable entry. Date (날짜) and work type (업무유형) are required. Project (프로젝트) is required unless the work type is NORMAL. Do not infer missing write fields from past records. If work type is missing, ask the user and present these options: 프로젝트 수행 (EXECUTE), 하자보수 (AFTER_SVC), 연구개발(R&D) (RESEARCH), 제안서 작업 (SUGGEST), 기타(일반업무) (NORMAL). If project is missing, call project.list and ask the user to choose. If hours are missing, explain that the default is 8 hours unless leave or day capacity rules reduce it.",
     {
       work_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("Work date (YYYY-MM-DD)"),
+        .describe("Work date (날짜, YYYY-MM-DD)"),
       rows: z.array(timetableRowSchema).min(1),
     },
     async ({ work_date, rows }) =>
@@ -358,7 +363,7 @@ async function main() {
 
   server.tool(
     "timetable.submit_prepared_day_entry",
-    "Submits a previously prepared single-day timetable entry.",
+    "Submits a previously prepared single-day timetable entry. Only submit after the user has confirmed the date (날짜), work type (업무유형), project (프로젝트), and hours (시간).",
     { prepared_entry_id: z.string() },
     async ({ prepared_entry_id }) =>
       toContent(
@@ -371,16 +376,16 @@ async function main() {
 
   server.tool(
     "timetable.prepare_bulk_entries",
-    "Prepares repeated timetable entries for a date range. project_id is required unless task_type is NORMAL.",
+    "Prepares repeated timetable entries for a date range. Work type (업무유형) is required. Project (프로젝트) is required unless the work type is NORMAL. Do not infer missing write fields from past records. If work type is missing, ask the user and present these options: 프로젝트 수행 (EXECUTE), 하자보수 (AFTER_SVC), 연구개발(R&D) (RESEARCH), 제안서 작업 (SUGGEST), 기타(일반업무) (NORMAL). If project is missing, call project.list and ask the user to choose. If hours are missing, explain that the default is 8 hours unless leave or day capacity rules reduce it.",
     {
       start_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("Start date (YYYY-MM-DD)"),
+        .describe("Start date (시작 날짜, YYYY-MM-DD)"),
       end_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("End date (YYYY-MM-DD)"),
+        .describe("End date (종료 날짜, YYYY-MM-DD)"),
       rows: z.array(timetableRowSchema).min(1),
     },
     async ({ start_date, end_date, rows }) =>
@@ -400,7 +405,7 @@ async function main() {
 
   server.tool(
     "timetable.submit_prepared_bulk_entries",
-    "Submits previously prepared bulk timetable entries.",
+    "Submits previously prepared bulk timetable entries. Only submit after the user has confirmed the date range (날짜 범위), work type (업무유형), project (프로젝트), and hours (시간).",
     { prepared_entry_id: z.string() },
     async ({ prepared_entry_id }) =>
       toContent(
@@ -418,7 +423,7 @@ async function main() {
       work_date: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .describe("Work date (YYYY-MM-DD)"),
+        .describe("Work date (날짜, YYYY-MM-DD)"),
     },
     async ({ work_date }) =>
       toContent(await timetableClearDay(timetableService, work_date))

@@ -10,6 +10,10 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export class PortalAuthManager {
   constructor(
     private readonly config: PortalConfig,
@@ -94,26 +98,30 @@ export class PortalAuthManager {
 
     let browser: import("playwright").Browser | undefined;
     try {
-      browser = await chromium.launch({ headless: false });
-      const context = await browser.newContext();
+      browser = await chromium.launch({
+        headless: false,
+        args: ["--start-maximized"],
+      });
+      const context = await browser.newContext({ viewport: null });
       const page = await context.newPage();
 
       await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
 
-      await page.waitForResponse(
+      const otpResponse = await page.waitForResponse(
         (response) =>
           response.url().includes("/account/otp/auth") &&
           response.status() === 200,
         { timeout: timeoutSeconds * 1000 }
       );
 
-      await sleep(1500);
+      await this.assertOtpAuthSucceeded(otpResponse);
+
+      await this.waitForSuccessfulLogin(page, successUrl, timeoutSeconds * 1000);
 
       const vuexPayload = await this.waitForVuexPayload(page, 15000);
-
       if (!vuexPayload) {
         throw new AuthenticationFlowError(
-          "OTP 인증은 완료됐지만 localStorage['vuex'].authority.token 값을 찾지 못했습니다.",
+          "로그인 성공 화면까지는 확인됐지만 localStorage['vuex'].authority.token 값을 찾지 못했습니다.",
           { loginUrl, successUrl }
         );
       }
@@ -132,6 +140,65 @@ export class PortalAuthManager {
           loginUrl,
           successUrl,
           detail: err instanceof Error ? err.message : String(err),
+        }
+      );
+    }
+  }
+
+  private async waitForSuccessfulLogin(
+    page: import("playwright").Page,
+    successUrl: string,
+    timeoutMs: number
+  ): Promise<void> {
+    const successPattern = new RegExp(`^${escapeRegExp(successUrl)}(?:[/?#].*)?$`);
+    try {
+      await page.waitForURL(
+        (url) => successPattern.test(url.toString()),
+        { timeout: timeoutMs }
+      );
+      await sleep(500);
+      return;
+    } catch {
+      throw new AuthenticationFlowError(
+        "OTP 인증 이후 포털 성공 페이지로 이동하지 못했습니다.",
+        {
+          successUrl,
+          detail: `Current URL: ${page.url()}`,
+        }
+      );
+    }
+  }
+
+  private async assertOtpAuthSucceeded(
+    response: import("playwright").Response
+  ): Promise<void> {
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return;
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+
+    const record = payload as Record<string, unknown>;
+    const status = typeof record["status"] === "string" ? record["status"] : undefined;
+    const statusCode =
+      typeof record["statusCode"] === "number" ? record["statusCode"] : undefined;
+    const message =
+      typeof record["message"] === "string"
+        ? record["message"]
+        : typeof record["errorMessage"] === "string"
+          ? record["errorMessage"]
+          : undefined;
+
+    if ((status && status !== "OK") || (statusCode && statusCode !== 200)) {
+      throw new AuthenticationFlowError(
+        "OTP 인증에 실패했습니다.",
+        {
+          detail: message ?? JSON.stringify(record),
         }
       );
     }
@@ -316,7 +383,7 @@ export class PortalAuthManager {
       backdrop.appendChild(panel);
       document.body.appendChild(backdrop);
     }).catch(() => {
-      // 페이지 상태 문제로 안내 UI 주입 실패해도 무시
+      // Ignore overlay injection issues caused by transient page state.
     });
   }
 
