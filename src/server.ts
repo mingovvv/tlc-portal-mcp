@@ -188,7 +188,7 @@ async function main() {
 
   server.tool(
     "leave.prepare_request",
-    "Prepares a leave request payload before submission. Do not infer missing leave fields from past records. If leave type is missing, ask the user and present these options: 종일휴가 (annual/full_day), 오전반차 (morning_half/half_day_am), 오후반차 (afternoon_half/half_day_pm), 인정휴가 (admit/full_day), 인정오전반차 (admit/half_day_am), 인정오후반차 (admit/half_day_pm).",
+    "Prepares a leave request payload before submission. Do not infer missing leave fields from past records. If leave type is missing, ask the user using the Korean labels first, not raw codes alone: 종일휴가, 오전반차, 오후반차, 인정휴가, 인정오전반차, 인정오후반차.",
     {
       leave_type_code: z
         .enum(["annual", "morning_half", "afternoon_half", "admit"])
@@ -339,7 +339,7 @@ async function main() {
 
   server.tool(
     "timetable.prepare_day_entry",
-    "Prepares a single-day timetable entry. Date (날짜) and work type (업무유형) are required. Project (프로젝트) is required unless the work type is NORMAL. Do not infer missing write fields from past records. If work type is missing, ask the user and present these options: 프로젝트 수행 (EXECUTE), 하자보수 (AFTER_SVC), 연구개발(R&D) (RESEARCH), 제안서 작업 (SUGGEST), 기타(일반업무) (NORMAL). If project is missing, call project.list and ask the user to choose. If hours are missing, explain that the default is 8 hours unless leave or day capacity rules reduce it.",
+    "Prepares a single-day timetable entry. Date (날짜) and work type (업무유형) are required. Project (프로젝트) is required unless the work type is NORMAL. Do not infer missing write fields from past records. If work type is missing, ask the user using the Korean labels first, not raw enum codes alone: 프로젝트 수행 (EXECUTE), 하자보수 (AFTER_SVC), 연구개발(R&D) (RESEARCH), 제안서 작업 (SUGGEST), 기타(일반업무) (NORMAL). If project is missing, call project.list and ask the user to choose. If hours are missing, explain that the default is 8 hours unless leave or day capacity rules reduce it.",
     {
       work_date: z
         .string()
@@ -363,7 +363,7 @@ async function main() {
 
   server.tool(
     "timetable.submit_prepared_day_entry",
-    "Submits a previously prepared single-day timetable entry. Only submit after the user has confirmed the date (날짜), work type (업무유형), project (프로젝트), and hours (시간).",
+    "Submits a previously prepared single-day timetable entry. Only submit after the user has confirmed the date (날짜), work type (업무유형), project (프로젝트), and hours (시간). When referring to work type, prefer the Korean labels and keep enum codes only as secondary hints.",
     { prepared_entry_id: z.string() },
     async ({ prepared_entry_id }) =>
       toContent(
@@ -376,7 +376,7 @@ async function main() {
 
   server.tool(
     "timetable.prepare_bulk_entries",
-    "Prepares repeated timetable entries for a date range. Work type (업무유형) is required. Project (프로젝트) is required unless the work type is NORMAL. Do not infer missing write fields from past records. If work type is missing, ask the user and present these options: 프로젝트 수행 (EXECUTE), 하자보수 (AFTER_SVC), 연구개발(R&D) (RESEARCH), 제안서 작업 (SUGGEST), 기타(일반업무) (NORMAL). If project is missing, call project.list and ask the user to choose. If hours are missing, explain that the default is 8 hours unless leave or day capacity rules reduce it.",
+    "Prepares repeated timetable entries for a date range. Work type (업무유형) is required. Project (프로젝트) is required unless the work type is NORMAL. Do not infer missing write fields from past records. If work type is missing, ask the user using the Korean labels first, not raw enum codes alone: 프로젝트 수행 (EXECUTE), 하자보수 (AFTER_SVC), 연구개발(R&D) (RESEARCH), 제안서 작업 (SUGGEST), 기타(일반업무) (NORMAL). If project is missing, call project.list and ask the user to choose. If hours are missing, explain that the default is 8 hours unless leave or day capacity rules reduce it.",
     {
       start_date: z
         .string()
@@ -405,7 +405,7 @@ async function main() {
 
   server.tool(
     "timetable.submit_prepared_bulk_entries",
-    "Submits previously prepared bulk timetable entries. Only submit after the user has confirmed the date range (날짜 범위), work type (업무유형), project (프로젝트), and hours (시간).",
+    "Submits previously prepared bulk timetable entries. Only submit after the user has confirmed the date range (날짜 범위), work type (업무유형), project (프로젝트), and hours (시간). When referring to work type, prefer the Korean labels and keep enum codes only as secondary hints.",
     { prepared_entry_id: z.string() },
     async ({ prepared_entry_id }) =>
       toContent(
