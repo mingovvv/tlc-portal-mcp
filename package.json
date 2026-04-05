@@ -1,0 +1,25 @@
+{
+  "name": "tlc-portal-mcp",
+  "version": "0.1.0",
+  "description": "사내 포탈을 stdio 기반 MCP 서버로 연결하기 위한 TypeScript 프로젝트",
+  "type": "module",
+  "bin": {
+    "tlc-portal-mcp": "./dist/server.js"
+  },
+  "scripts": {
+    "postinstall": "playwright install chromium",
+    "build": "tsc",
+    "dev": "tsx src/server.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.2",
+    "playwright": "^1.52.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.0"
+  }
+}
