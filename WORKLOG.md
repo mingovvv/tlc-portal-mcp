@@ -105,6 +105,7 @@
 - Expired-token retry after a `401` is not implemented yet.
 - Added a post-login wait for `localStorage['vuex']` so the browser does not close before the token is actually written.
 - Reworked the login token capture to poll `localStorage['vuex']` across redirects instead of relying on a single page function wait.
+- Replaced the small post-login toast with a centered completion overlay that explains the Portal session is connected to the MCP server and that the page can be closed.
 
 ### Current Project Shape
 

@@ -100,9 +100,6 @@ export class PortalAuthManager {
 
       await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
 
-      // 1단계: OTP 인증 API 응답 대기.
-      //   ID/PW 제출 직후 Vuex에 임시 토큰이 세팅될 수 있으므로
-      //   반드시 OTP auth API 응답을 확인한 뒤 최종 토큰을 읽어야 한다.
       await page.waitForResponse(
         (response) =>
           response.url().includes("/account/otp/auth") &&
@@ -110,10 +107,8 @@ export class PortalAuthManager {
         { timeout: timeoutSeconds * 1000 }
       );
 
-      // 2단계: OTP 완료 후 Vuex에 최종 토큰이 반영될 때까지 잠깐 대기.
       await sleep(1500);
 
-      // 3단계: 최종 Vuex 토큰 추출.
       const vuexPayload = await this.waitForVuexPayload(page, 15000);
 
       if (!vuexPayload) {
@@ -124,8 +119,7 @@ export class PortalAuthManager {
       }
 
       const session = this.importVuexState(vuexPayload);
-      await this.showSuccessToast(page);
-      // 브라우저는 닫지 않음 — 사용자가 포털을 계속 사용할 수 있도록 유지.
+      await this.showSuccessOverlay(page);
       return session;
     } catch (err) {
       if (browser) {
@@ -155,8 +149,6 @@ export class PortalAuthManager {
       }
 
       try {
-        // vuex에 authority.token이 실제로 세팅된 경우에만 반환.
-        // 로그인 전에도 vuex가 존재할 수 있으므로 토큰 유무로 판단한다.
         const payload = await page.evaluate(() => {
           const raw = window.localStorage.getItem("vuex");
           if (!raw) return null;
@@ -180,31 +172,151 @@ export class PortalAuthManager {
     return null;
   }
 
-  private async showSuccessToast(page: import("playwright").Page): Promise<void> {
+  private async showSuccessOverlay(page: import("playwright").Page): Promise<void> {
     await page.evaluate(() => {
-      const toast = document.createElement("div");
-      toast.style.cssText = [
+      const existing = document.getElementById("tlc-mcp-login-success-overlay");
+      if (existing) {
+        existing.remove();
+      }
+
+      const backdrop = document.createElement("div");
+      backdrop.id = "tlc-mcp-login-success-overlay";
+      backdrop.style.cssText = [
         "position:fixed",
-        "bottom:24px",
-        "right:24px",
-        "background:#16a34a",
-        "color:#fff",
-        "border-radius:10px",
-        "padding:12px 18px",
-        "font-family:Segoe UI,Arial,sans-serif",
-        "font-size:14px",
-        "font-weight:600",
-        "box-shadow:0 4px 16px rgba(0,0,0,.2)",
+        "inset:0",
+        "display:flex",
+        "align-items:center",
+        "justify-content:center",
+        "padding:24px",
+        "background:radial-gradient(circle at top, rgba(15,23,42,0.12), rgba(15,23,42,0.34))",
+        "backdrop-filter:blur(10px)",
         "z-index:2147483647",
-        "opacity:1",
-        "transition:opacity .4s",
+        "font-family:'Segoe UI','Noto Sans KR',sans-serif",
       ].join(";");
-      toast.textContent = "✅ 포털 인증이 저장되었습니다.";
-      document.body.appendChild(toast);
-      setTimeout(() => { toast.style.opacity = "0"; }, 3000);
-      setTimeout(() => { toast.remove(); }, 3500);
+
+      const panel = document.createElement("section");
+      panel.style.cssText = [
+        "position:relative",
+        "width:min(480px, calc(100vw - 32px))",
+        "padding:30px 30px 26px",
+        "border-radius:28px",
+        "background:linear-gradient(145deg, rgba(255,255,255,0.97), rgba(248,250,252,0.95))",
+        "border:1px solid rgba(148,163,184,0.18)",
+        "box-shadow:0 28px 90px rgba(15,23,42,0.28)",
+        "overflow:hidden",
+        "color:#0f172a",
+      ].join(";");
+
+      const closeButton = document.createElement("button");
+      closeButton.type = "button";
+      closeButton.setAttribute("aria-label", "안내 닫기");
+      closeButton.style.cssText = [
+        "position:absolute",
+        "top:16px",
+        "right:16px",
+        "width:36px",
+        "height:36px",
+        "border:none",
+        "border-radius:999px",
+        "background:rgba(148,163,184,0.14)",
+        "color:#334155",
+        "font-size:22px",
+        "line-height:1",
+        "cursor:pointer",
+        "display:flex",
+        "align-items:center",
+        "justify-content:center",
+        "transition:background .2s ease, transform .2s ease",
+      ].join(";");
+      closeButton.textContent = "×";
+      closeButton.addEventListener("mouseenter", () => {
+        closeButton.style.background = "rgba(148,163,184,0.24)";
+        closeButton.style.transform = "scale(1.04)";
+      });
+      closeButton.addEventListener("mouseleave", () => {
+        closeButton.style.background = "rgba(148,163,184,0.14)";
+        closeButton.style.transform = "scale(1)";
+      });
+      closeButton.addEventListener("click", () => {
+        backdrop.remove();
+      });
+
+      const glow = document.createElement("div");
+      glow.style.cssText = [
+        "position:absolute",
+        "top:-110px",
+        "right:-60px",
+        "width:220px",
+        "height:220px",
+        "border-radius:999px",
+        "background:radial-gradient(circle, rgba(16,185,129,0.28), rgba(16,185,129,0))",
+        "pointer-events:none",
+      ].join(";");
+
+      const badge = document.createElement("div");
+      badge.style.cssText = [
+        "display:inline-flex",
+        "align-items:center",
+        "gap:8px",
+        "padding:8px 12px",
+        "border-radius:999px",
+        "background:rgba(15,118,110,0.08)",
+        "color:#0f766e",
+        "font-size:12px",
+        "font-weight:700",
+        "letter-spacing:0.08em",
+        "text-transform:uppercase",
+      ].join(";");
+      badge.textContent = "Portal Session Ready";
+
+      const title = document.createElement("h1");
+      title.style.cssText = [
+        "margin:18px 0 10px",
+        "font-size:30px",
+        "line-height:1.12",
+        "font-weight:800",
+        "letter-spacing:-0.04em",
+      ].join(";");
+      title.textContent = "로그인 연결 완료";
+
+      const body = document.createElement("p");
+      body.style.cssText = [
+        "margin:0",
+        "font-size:16px",
+        "line-height:1.7",
+        "color:#334155",
+      ].join(";");
+      body.textContent =
+        "TwolineCloud Portal 세션이 MCP 서버에 연결되었습니다.";
+
+      const footnote = document.createElement("p");
+      footnote.style.cssText = [
+        "margin:14px 0 0",
+        "font-size:14px",
+        "line-height:1.6",
+        "color:#475569",
+      ].join(";");
+      footnote.textContent = "원하시면 이 페이지를 닫아도 됩니다.";
+
+      const accent = document.createElement("div");
+      accent.style.cssText = [
+        "margin-top:22px",
+        "height:4px",
+        "border-radius:999px",
+        "background:linear-gradient(90deg, #0f766e 0%, #10b981 55%, #99f6e4 100%)",
+      ].join(";");
+
+      panel.appendChild(closeButton);
+      panel.appendChild(glow);
+      panel.appendChild(badge);
+      panel.appendChild(title);
+      panel.appendChild(body);
+      panel.appendChild(footnote);
+      panel.appendChild(accent);
+      backdrop.appendChild(panel);
+      document.body.appendChild(backdrop);
     }).catch(() => {
-      // 페이지 상태 문제로 toast 삽입 실패해도 무시
+      // 페이지 상태 문제로 안내 UI 주입 실패해도 무시
     });
   }
 
