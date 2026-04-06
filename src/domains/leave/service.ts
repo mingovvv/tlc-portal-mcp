@@ -221,7 +221,7 @@ export class LeaveService {
     }
 
     const employeeId = session.employeeId;
-    const portalType = this.mapLeaveCodeToPortalType(prepared.input.leaveTypeCode);
+    const portalType = this.mapLeaveCodeToPortalType(prepared.input.leaveTypeCode, prepared.input.unit);
     const period = this.calculatePeriod(prepared.input);
 
     const res = await this.http.post(
@@ -277,6 +277,15 @@ export class LeaveService {
     if (leaveType.requiresReason && !input.reason) {
       throw new LeaveValidationError(`${leaveType.name}은 사유가 필요합니다.`);
     }
+
+    // morning_half / afternoon_half 코드는 unit이 full_day로 넘어와도 반차로 처리
+    if (input.leaveTypeCode === "morning_half" && input.unit === LeaveUnit.FULL_DAY) {
+      input.unit = LeaveUnit.HALF_DAY_AM;
+    }
+    if (input.leaveTypeCode === "afternoon_half" && input.unit === LeaveUnit.FULL_DAY) {
+      input.unit = LeaveUnit.HALF_DAY_PM;
+    }
+
     if (
       (input.unit === LeaveUnit.HALF_DAY_AM ||
         input.unit === LeaveUnit.HALF_DAY_PM) &&
@@ -286,7 +295,16 @@ export class LeaveService {
     }
   }
 
-  private mapLeaveCodeToPortalType(code: string): PortalVacationType {
+  private mapLeaveCodeToPortalType(code: string, unit?: LeaveUnit): PortalVacationType {
+    // annual + half_day_* 조합: unit 기준으로 포탈 타입 결정
+    if (code === "annual") {
+      if (unit === LeaveUnit.HALF_DAY_AM) return PortalVacationType.MORNING_HALF;
+      if (unit === LeaveUnit.HALF_DAY_PM) return PortalVacationType.AFTERNOON_HALF;
+    }
+    if (code === "admit") {
+      if (unit === LeaveUnit.HALF_DAY_AM) return PortalVacationType.ADMIT_MORNING_HALF;
+      if (unit === LeaveUnit.HALF_DAY_PM) return PortalVacationType.ADMIT_AFTERNOON_HALF;
+    }
     const map: Record<string, PortalVacationType> = {
       annual: PortalVacationType.ALL_DAY,
       morning_half: PortalVacationType.MORNING_HALF,

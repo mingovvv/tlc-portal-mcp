@@ -2,3 +2,4 @@ node_modules/
 dist/
 .portal-session.json
 *.js.map
+.claude/
