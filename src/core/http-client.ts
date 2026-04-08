@@ -4,7 +4,7 @@
  */
 
 import type { PortalConfig } from "./config.js";
-import { PortalRequestError } from "./errors.js";
+import { PortalRequestError, TokenExpiredError } from "./errors.js";
 import type { FileSessionStore, PortalSession } from "./session-store.js";
 
 const MAX_RETRIES = 3;
@@ -55,6 +55,9 @@ export class PortalHttpClient {
           body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
         });
 
+        if (res.status === 401) {
+          throw new TokenExpiredError();
+        }
         if (!res.ok) {
           throw new PortalRequestError(
             `포탈 요청 실패: ${method} ${url} → ${res.status}`
@@ -62,6 +65,7 @@ export class PortalHttpClient {
         }
         return res;
       } catch (err) {
+        if (err instanceof TokenExpiredError) throw err;
         lastError = err instanceof Error ? err : new Error(String(err));
         if (attempt < MAX_RETRIES - 1) await sleep(RETRY_DELAY_MS);
       }

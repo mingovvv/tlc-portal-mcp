@@ -40,6 +40,19 @@ export class PortalRequestError extends PortalError {
   }
 }
 
+export class TokenExpiredError extends PortalError {
+  expiredAt?: Date;
+
+  constructor(
+    message = "JWT 토큰이 만료되었습니다. 다시 로그인해 주세요.",
+    opts: { expiredAt?: Date } = {}
+  ) {
+    super(message);
+    this.name = "TokenExpiredError";
+    this.expiredAt = opts.expiredAt;
+  }
+}
+
 export class LeaveValidationError extends PortalError {
   constructor(message: string) {
     super(message);

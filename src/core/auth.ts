@@ -3,6 +3,7 @@ import type { PortalConfig } from "./config.js";
 import {
   AuthenticationFlowError,
   AuthenticationRequiredError,
+  TokenExpiredError,
 } from "./errors.js";
 import type { FileSessionStore, PortalSession } from "./session-store.js";
 
@@ -26,7 +27,7 @@ export class PortalAuthManager {
 
   async ensureAuthenticatedSession(timeoutSeconds = 300): Promise<PortalSession> {
     const session = this.getSession();
-    if (session.authenticated && session.jwtToken) {
+    if (session.authenticated && session.jwtToken && !this.isTokenExpired(session.jwtToken)) {
       return session;
     }
     return this.interactiveLogin(timeoutSeconds);
@@ -36,6 +37,10 @@ export class PortalAuthManager {
     const session = this.getSession();
     if (!session.authenticated || !session.jwtToken) {
       throw new AuthenticationRequiredError();
+    }
+    if (this.isTokenExpired(session.jwtToken)) {
+      const expiry = PortalAuthManager.decodeJwtExpiry(session.jwtToken);
+      throw new TokenExpiredError(undefined, { expiredAt: expiry ?? undefined });
     }
     return session;
   }
@@ -55,6 +60,28 @@ export class PortalAuthManager {
     };
     this.store.save(session);
     return session;
+  }
+
+  static decodeJwtExpiry(token: string): Date | null {
+    try {
+      const payloadB64 = token.split(".")[1];
+      const padded = payloadB64 + "=".repeat((4 - (payloadB64.length % 4)) % 4);
+      const decoded = Buffer.from(padded, "base64url").toString("utf-8");
+      const claims = JSON.parse(decoded) as Record<string, unknown>;
+      const exp = claims["exp"];
+      if (typeof exp === "number") {
+        return new Date(exp * 1000);
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private isTokenExpired(token: string): boolean {
+    const expiry = PortalAuthManager.decodeJwtExpiry(token);
+    if (!expiry) return false;
+    return expiry.getTime() <= Date.now();
   }
 
   static decodeJwtEmployeeId(token: string): number | null {

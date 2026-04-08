@@ -2,7 +2,7 @@
  * 인증 관련 MCP tool 핸들러.
  */
 
-import type { PortalAuthManager } from "../core/auth.js";
+import { PortalAuthManager } from "../core/auth.js";
 import { AuthenticationFlowError } from "../core/errors.js";
 import type { FileSessionStore } from "../core/session-store.js";
 
@@ -57,9 +57,16 @@ export function authStatus(
   sessionFile: string
 ): Record<string, unknown> {
   const session = auth.getSession();
+  const token = session.jwtToken;
+  const expiry = token ? PortalAuthManager.decodeJwtExpiry(token) : null;
+  const tokenExpired = token ? (expiry ? expiry.getTime() <= Date.now() : false) : false;
+  const isAuthenticated = session.authenticated && Boolean(token) && !tokenExpired;
+
   return {
-    authenticated: session.authenticated && Boolean(session.jwtToken),
-    hasJwtToken: Boolean(session.jwtToken),
+    authenticated: isAuthenticated,
+    hasJwtToken: Boolean(token),
+    tokenExpired,
+    tokenExpiresAt: expiry ? expiry.toISOString() : null,
     employeeId: session.employeeId,
     sessionFile,
   };

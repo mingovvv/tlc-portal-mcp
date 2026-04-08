@@ -60,21 +60,21 @@ export class LeaveService {
         name: "연차",
         portalValue: PortalVacationType.ALL_DAY,
         supportsHalfDay: true,
-        requiresReason: false,
+        requiresReason: true,
       },
       {
         code: "morning_half",
         name: "오전반차",
         portalValue: PortalVacationType.MORNING_HALF,
         supportsHalfDay: true,
-        requiresReason: false,
+        requiresReason: true,
       },
       {
         code: "afternoon_half",
         name: "오후반차",
         portalValue: PortalVacationType.AFTERNOON_HALF,
         supportsHalfDay: true,
-        requiresReason: false,
+        requiresReason: true,
       },
       {
         code: "admit",
@@ -274,8 +274,10 @@ export class LeaveService {
     if (!leaveType) {
       throw new LeaveValidationError(`알 수 없는 휴가 유형: ${input.leaveTypeCode}`);
     }
-    if (leaveType.requiresReason && !input.reason) {
-      throw new LeaveValidationError(`${leaveType.name}은 사유가 필요합니다.`);
+    if (leaveType.requiresReason && !input.reason?.trim()) {
+      throw new LeaveValidationError(
+        `휴가 신청 사유를 입력해 주세요. (회사 정책상 모든 휴가 유형에 사유가 필요합니다.)`
+      );
     }
 
     // morning_half / afternoon_half 코드는 unit이 full_day로 넘어와도 반차로 처리

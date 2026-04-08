@@ -1,6 +1,6 @@
 {
   "name": "tlc-portal-mcp",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "사내 포탈을 stdio 기반 MCP 서버로 연결하기 위한 TypeScript 프로젝트",
   "type": "module",
   "bin": {

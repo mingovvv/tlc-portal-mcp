@@ -9,6 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { PortalAuthManager } from "./core/auth.js";
 import { loadConfig } from "./core/config.js";
+import { TokenExpiredError } from "./core/errors.js";
 import { PortalHttpClient } from "./core/http-client.js";
 import { getPackageName, getPackageVersion } from "./core/package-info.js";
 import { FileSessionStore } from "./core/session-store.js";
@@ -150,7 +151,7 @@ async function main() {
     "leave.get_balances",
     "Fetches the current leave balances.",
     {},
-    async () => toContent(await leaveGetBalances(leaveService))
+    async () => withAuthGuard(() => leaveGetBalances(leaveService))
   );
 
   server.tool(
@@ -175,8 +176,8 @@ async function main() {
       offset: z.number().int().min(0).default(0),
     },
     async ({ statuses, from_date, to_date, limit, offset }) =>
-      toContent(
-        await leaveListRequests(leaveService, {
+      withAuthGuard(() =>
+        leaveListRequests(leaveService, {
           statuses,
           fromDate: from_date,
           toDate: to_date,
@@ -188,7 +189,7 @@ async function main() {
 
   server.tool(
     "leave.prepare_request",
-    "Prepares a leave request payload before submission. Do not infer missing leave fields from past records. If leave type is missing, ask the user using the Korean labels first, not raw codes alone: 종일휴가, 오전반차, 오후반차, 인정휴가, 인정오전반차, 인정오후반차.",
+    "Prepares a leave request payload before submission. IMPORTANT: reason (사유) is required by company policy for ALL leave types — never omit it. If the user has not provided a reason, ask them before calling this tool. Do not infer missing leave fields from past records. If leave type is missing, ask the user using the Korean labels first, not raw codes alone: 종일휴가, 오전반차, 오후반차, 인정휴가, 인정오전반차, 인정오후반차.",
     {
       leave_type_code: z
         .enum(["annual", "morning_half", "afternoon_half", "admit"])
@@ -204,7 +205,10 @@ async function main() {
       unit: z
         .enum(["full_day", "half_day_am", "half_day_pm"])
         .default("full_day"),
-      reason: z.string().optional().describe("Leave reason (사유)"),
+      reason: z
+        .string()
+        .min(1)
+        .describe("Leave reason — required by company policy for all leave types (필수 사유)"),
       delegate_employee_id: z
         .string()
         .optional()
@@ -223,7 +227,7 @@ async function main() {
       delegate_employee_id,
       contact_phone,
     }) =>
-      toContent(
+      withAuthGuard(() =>
         leavePrepareRequest(leaveService, {
           leaveTypeCode: leave_type_code,
           startDate: start_date,
@@ -241,7 +245,7 @@ async function main() {
     "Submits a previously prepared leave request.",
     { prepared_request_id: z.string() },
     async ({ prepared_request_id }) =>
-      toContent(await leaveSubmitPreparedRequest(leaveService, prepared_request_id))
+      withAuthGuard(() => leaveSubmitPreparedRequest(leaveService, prepared_request_id))
   );
 
   server.tool(
@@ -249,35 +253,35 @@ async function main() {
     "Cancels an existing leave request.",
     { request_id: z.string().describe("Leave request ID to cancel") },
     async ({ request_id }) =>
-      toContent(await leaveCancelRequest(leaveService, request_id))
+      withAuthGuard(() => leaveCancelRequest(leaveService, request_id))
   );
 
   server.tool(
     "project.list",
     "Returns project choices that can be used for timetable entry.",
     { limit: z.number().int().min(1).max(999999).default(999999) },
-    async ({ limit }) => toContent(await projectList(timetableService, limit))
+    async ({ limit }) => withAuthGuard(() => projectList(timetableService, limit))
   );
 
   server.tool(
     "timetable.get_manage_info",
     "Returns timetable management and closing information.",
     {},
-    async () => toContent(await timetableGetManageInfo(timetableService))
+    async () => withAuthGuard(() => timetableGetManageInfo(timetableService))
   );
 
   server.tool(
     "timetable.get_user_summary",
     "Returns the current user's timetable summary.",
     {},
-    async () => toContent(await timetableGetUserSummary(timetableService))
+    async () => withAuthGuard(() => timetableGetUserSummary(timetableService))
   );
 
   server.tool(
     "timetable.get_available_range",
     "Returns the current timetable input availability range.",
     {},
-    async () => toContent(await timetableGetAvailableRange(timetableService))
+    async () => withAuthGuard(() => timetableGetAvailableRange(timetableService))
   );
 
   server.tool(
@@ -290,7 +294,7 @@ async function main() {
         .describe("Work date (날짜, YYYY-MM-DD)"),
     },
     async ({ work_date }) =>
-      toContent(await timetableGetDay(timetableService, work_date))
+      withAuthGuard(() => timetableGetDay(timetableService, work_date))
   );
 
   server.tool(
@@ -307,12 +311,8 @@ async function main() {
         .describe("End date (종료 날짜, YYYY-MM-DD)"),
     },
     async ({ start_date, end_date }) =>
-      toContent(
-        await timetableGetRangeOverview(
-          timetableService,
-          start_date,
-          end_date
-        )
+      withAuthGuard(() =>
+        timetableGetRangeOverview(timetableService, start_date, end_date)
       )
   );
 
@@ -321,7 +321,7 @@ async function main() {
     "Compatibility alias for project.list. Returns project choices for timetable entry.",
     { limit: z.number().int().min(1).max(999999).default(999999) },
     async ({ limit }) =>
-      toContent(await timetableListProjects(timetableService, limit))
+      withAuthGuard(() => timetableListProjects(timetableService, limit))
   );
 
   server.tool(
@@ -334,7 +334,7 @@ async function main() {
         .describe("Work date (날짜, YYYY-MM-DD)"),
     },
     async ({ work_date }) =>
-      toContent(await timetableGetDayCapacity(timetableService, work_date))
+      withAuthGuard(() => timetableGetDayCapacity(timetableService, work_date))
   );
 
   server.tool(
@@ -348,8 +348,8 @@ async function main() {
       rows: z.array(timetableRowSchema).min(1),
     },
     async ({ work_date, rows }) =>
-      toContent(
-        await timetablePrepareDayEntry(timetableService, {
+      withAuthGuard(() =>
+        timetablePrepareDayEntry(timetableService, {
           workDate: work_date,
           rows: rows.map((row) => ({
             taskType: row.task_type,
@@ -366,11 +366,8 @@ async function main() {
     "Submits a previously prepared single-day timetable entry. Only submit after the user has confirmed the date (날짜), work type (업무유형), project (프로젝트), and hours (시간). When referring to work type, prefer the Korean labels and keep enum codes only as secondary hints.",
     { prepared_entry_id: z.string() },
     async ({ prepared_entry_id }) =>
-      toContent(
-        await timetableSubmitPreparedDayEntry(
-          timetableService,
-          prepared_entry_id
-        )
+      withAuthGuard(() =>
+        timetableSubmitPreparedDayEntry(timetableService, prepared_entry_id)
       )
   );
 
@@ -389,8 +386,8 @@ async function main() {
       rows: z.array(timetableRowSchema).min(1),
     },
     async ({ start_date, end_date, rows }) =>
-      toContent(
-        await timetablePrepareBulkEntries(timetableService, {
+      withAuthGuard(() =>
+        timetablePrepareBulkEntries(timetableService, {
           startDate: start_date,
           endDate: end_date,
           rows: rows.map((row) => ({
@@ -408,11 +405,8 @@ async function main() {
     "Submits previously prepared bulk timetable entries. Only submit after the user has confirmed the date range (날짜 범위), work type (업무유형), project (프로젝트), and hours (시간). When referring to work type, prefer the Korean labels and keep enum codes only as secondary hints.",
     { prepared_entry_id: z.string() },
     async ({ prepared_entry_id }) =>
-      toContent(
-        await timetableSubmitPreparedBulkEntries(
-          timetableService,
-          prepared_entry_id
-        )
+      withAuthGuard(() =>
+        timetableSubmitPreparedBulkEntries(timetableService, prepared_entry_id)
       )
   );
 
@@ -426,7 +420,7 @@ async function main() {
         .describe("Work date (날짜, YYYY-MM-DD)"),
     },
     async ({ work_date }) =>
-      toContent(await timetableClearDay(timetableService, work_date))
+      withAuthGuard(() => timetableClearDay(timetableService, work_date))
   );
 
   const transport = new StdioServerTransport();
@@ -437,6 +431,23 @@ function toContent(data: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
   };
+}
+
+async function withAuthGuard<T>(fn: () => Promise<T> | T): Promise<ReturnType<typeof toContent>> {
+  try {
+    return toContent(await fn());
+  } catch (err) {
+    if (err instanceof TokenExpiredError) {
+      return toContent({
+        success: false,
+        loginRequired: true,
+        reason: "세션이 만료되었습니다.",
+        action: "auth.login 도구를 실행하면 브라우저 로그인 창이 열립니다.",
+        expiredAt: err.expiredAt?.toISOString() ?? null,
+      });
+    }
+    throw err;
+  }
 }
 
 main().catch((err) => {
